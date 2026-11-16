@@ -224,6 +224,10 @@ Whether you are preparing for examinations, working on laboratory assignments, e
 
 ---
 
+## 🔁 Forking / starting your own
+
+This project is fully self-contained (static Next.js export to GitHub Pages). If this repository becomes inactive, you are free to **clone it and run your own** instance — no permission required. Update the remote, `basePath`, and deploy target to your own GitHub Pages (or any static host).
+
 ## 📜 License
 
 This project is distributed under the license specified in the [`LICENSE`](LICENSE) file.

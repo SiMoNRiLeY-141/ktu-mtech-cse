@@ -1,28 +1,37 @@
 import fs from "fs";
 import path from "path";
 import Link from "next/link";
-import { Metadata } from "next";
-import styles from "./Explorer.module.css";
+import { useState } from "react";
+import JSZip from "jszip";
+import Nav from "../../components/Nav";
+import Breadcrumbs from "../../components/Breadcrumbs";
+import MarkdownModal from "../../components/MarkdownModal";
+import { formatBytes, fileIcon } from "../../lib/format";
 
-export const metadata: Metadata = {
-  title: "AcademiaDrive Explorer",
-};
+export const metadata = { title: "AcademiaDrive Explorer" };
 
 type ExplorerPageProps = {
-  params: {
-    slug: string[];
-  };
+  params: { slug: string[] };
   directories: { name: string }[];
-  files: { name: string; ext: string }[];
+  files: { name: string; ext: string; size: number }[];
 };
 
-export async function getStaticPaths() {
-  const basePath = path.join(process.cwd(), "public/academiadrive");
+function hasFiles(dir: string): boolean {
+  try {
+    for (const entry of fs.readdirSync(dir, { withFileTypes: true })) {
+      const full = path.join(dir, entry.name);
+      if (entry.isFile()) return true;
+      if (entry.isDirectory() && hasFiles(full)) return true;
+    }
+  } catch {}
+  return false;
+}
 
+export async function getStaticPaths() {
+  const basePath = path.join(process.cwd(), "public", "academiadrive");
   const getDirectories = (dir: string): string[] => {
     const entries = fs.readdirSync(dir, { withFileTypes: true });
     let directories: string[] = [];
-
     entries.forEach((entry) => {
       const fullPath = path.join(dir, entry.name);
       if (entry.isDirectory()) {
@@ -32,25 +41,16 @@ export async function getStaticPaths() {
         directories = directories.concat(getDirectories(fullPath));
       }
     });
-
     return directories;
   };
-
   const directories = getDirectories(basePath);
-  const paths = directories.map((dir) => ({
-    params: { slug: dir.split("/") },
-  }));
-
+  const paths = directories.map((dir) => ({ params: { slug: dir.split("/") } }));
   return { paths, fallback: false };
 }
 
-export async function getStaticProps({
-  params,
-}: {
-  params: { slug: string[] };
-}) {
+export async function getStaticProps({ params }: { params: { slug: string[] } }) {
   const { slug = [] } = params;
-  const basePath = path.join(process.cwd(), "public/academiadrive", ...slug);
+  const basePath = path.join(process.cwd(), "public", "academiadrive", ...slug);
 
   let entries: fs.Dirent[] = [];
   try {
@@ -61,115 +61,311 @@ export async function getStaticProps({
 
   const directories = entries
     .filter((e) => e.isDirectory())
+    .filter((e) => hasFiles(path.join(basePath, e.name)))
     .map((dir) => ({ name: dir.name }))
     .sort((a, b) => a.name.localeCompare(b.name));
 
   const files = entries
     .filter((e) => e.isFile())
-    .map((file) => ({
-      name: file.name,
-      ext: path.extname(file.name).toLowerCase().replace(/^\./, ""),
-    }))
+    .map((file) => {
+      const stat = fs.statSync(path.join(basePath, file.name));
+      return {
+        name: file.name,
+        ext: path.extname(file.name).toLowerCase().replace(/^\./, ""),
+        size: stat.size,
+      };
+    })
     .sort((a, b) => a.name.localeCompare(b.name));
 
-  return {
-    props: { params, directories, files },
-  };
+  return { props: { params, directories, files } };
 }
 
-export default function ExplorerPage({
-  params,
-  directories,
-  files,
-}: ExplorerPageProps) {
-  const { slug = [] } = params;
+function fileUrl(slug: string[], name: string) {
   const basePath = process.env.NEXT_PUBLIC_BASE_PATH || "";
-  const fileUrl = (name: string) =>
-    `${basePath}/academiadrive/${[...slug, name]
-      .map((s) => encodeURIComponent(s))
-      .join("/")}`;
+  return `${basePath}/academiadrive/${[...slug, name].map((s) => encodeURIComponent(s)).join("/")}`;
+}
+
+export default function ExplorerPage({ params, directories, files }: ExplorerPageProps) {
+  const { slug = [] } = params;
+  const [filter, setFilter] = useState("");
+  const [preview, setPreview] = useState<{ url: string; name: string } | null>(null);
+  const [selected, setSelected] = useState<Set<string>>(new Set());
+  const [zipping, setZipping] = useState(false);
+  const [copied, setCopied] = useState<string | null>(null);
+
+  const toggleSelect = (name: string) => {
+    setSelected((prev) => {
+      const next = new Set(prev);
+      if (next.has(name)) next.delete(name); else next.add(name);
+      return next;
+    });
+  };
+
+  const selectAll = () => {
+    if (selected.size === visibleFiles.length) setSelected(new Set());
+    else setSelected(new Set(visibleFiles.map((f) => f.name)));
+  };
+
+  const basePathEnv = process.env.NEXT_PUBLIC_BASE_PATH || "";
+
+  const downloadZip = async (entries: { name: string; url: string; relPath: string }[], zipName: string) => {
+    if (entries.length === 0) return;
+    setZipping(true);
+    try {
+      const zip = new JSZip();
+      for (const e of entries) {
+        const res = await fetch(e.url);
+        if (!res.ok) continue;
+        const blob = await res.blob();
+        zip.file(e.relPath, blob);
+      }
+      const content = await zip.generateAsync({ type: "blob" });
+      const a = document.createElement("a");
+      a.href = URL.createObjectURL(content);
+      a.download = zipName;
+      document.body.appendChild(a);
+      a.click();
+      document.body.removeChild(a);
+      URL.revokeObjectURL(a.href);
+    } finally {
+      setZipping(false);
+    }
+  };
+
+  const downloadSelected = () => {
+    const entries = files
+      .filter((f) => selected.has(f.name))
+      .map((f) => ({
+        name: f.name,
+        url: fileUrl(slug, f.name),
+        relPath: f.name,
+      }));
+    downloadZip(entries, "selected.zip");
+  };
+
+  const downloadFolder = async () => {
+    const prefix = slug.length > 0 ? slug.join("/") + "/" : "";
+    let idx: { name: string; path: string }[] = [];
+    try {
+      const res = await fetch(`${basePathEnv}/search-index.json`);
+      idx = await res.json();
+    } catch {
+      idx = files.map((f) => ({ name: f.name, path: [...slug, f.name].join("/") }));
+    }
+    const entries = idx
+      .filter((e) => e.path.startsWith(prefix))
+      .map((e) => ({
+        name: e.name,
+        url: `${basePathEnv}/academiadrive/${e.path.split("/").map(encodeURIComponent).join("/")}`,
+        relPath: e.path.slice(prefix.length),
+      }));
+    const folderName = slug.length > 0 ? slug[slug.length - 1] : "root";
+    downloadZip(entries, `${folderName}.zip`);
+  };
+
+  const copyLink = async (name: string) => {
+    const url = fileUrl(slug, name);
+    try {
+      await navigator.clipboard.writeText(url);
+      setCopied(name);
+      setTimeout(() => setCopied((c) => (c === name ? null : c)), 1500);
+    } catch {}
+  };
+  const visibleFiles = files.filter((f) =>
+    f.name.toLowerCase().includes(filter.trim().toLowerCase())
+  );
+  const visibleDirs = directories.filter((d) =>
+    d.name.toLowerCase().includes(filter.trim().toLowerCase())
+  );
 
   return (
-    <main className="min-h-screen bg-gradient-to-b from-white to-gray-50 p-8">
-      <div className="max-w-6xl mx-auto">
-        <h1 className="text-center text-3xl md:text-4xl font-semibold text-gray-900 mb-1">
-          Study Material
-        </h1>
-
-        <div
-          className={`${styles.subheading} text-center text-sm text-gray-600 mb-8`}
-        >
-          {slug.length > 0 ? slug.join(" / ") : "SELECT A CATEGORY"}
+    <>
+      <Nav />
+      <main className="container">
+        <div className="explorer-head">
+          <Breadcrumbs slug={slug} />
+          <div className="explorer-title-row">
+            <h1 className="explorer-title">
+              {slug.length > 0 ? slug[slug.length - 1].replace(/_/g, " ") : "Resource Hub"}
+            </h1>
+            <span className="meta">{directories.length + files.length} items</span>
+          </div>
+          <p className="explorer-sub">
+            {slug.length > 0 ? slug.join(" / ") : "Syllabus, notes, question papers, lab resources and projects — all in one place."}
+          </p>
         </div>
 
-        {directories.length > 0 && (
-          <div className="flex flex-wrap gap-4 justify-center mb-6">
-            {directories.map((dir) => (
-              <Link
-                key={dir.name}
-                href={`/explorer/${[...slug, dir.name].join("/")}`}
-                className="block"
-                aria-label={`Open ${dir.name}`}
-              >
-                <div
-                  title={dir.name}
-                  className="w-58 h-20 flex items-center justify-center rounded-lg border border-gray-300 bg-white px-3 text-center text-sm md:text-base font-medium text-gray-900 shadow-sm hover:shadow-md hover:bg-blue-600 hover:text-white transition-colors duration-200"
-                >
-                  <span className="cardText">
-                    {dir.name.replace(/_/g, "_\u200B")}
-                  </span>
-                </div>
-              </Link>
-            ))}
+        {(directories.length > 0 || files.length > 0) && (
+          <div className="explorer-toolbar">
+            <input
+              className="input"
+              type="search"
+              placeholder="Filter this folder…"
+              value={filter}
+              onChange={(e) => setFilter(e.target.value)}
+              aria-label="Filter current folder"
+            />
           </div>
         )}
 
+        {visibleDirs.length > 0 && (
+          <section className="explorer-section">
+            <h2 className="section-label">Folders</h2>
+            <div className="dir-grid">
+              {visibleDirs.map((dir) => (
+                <Link
+                  key={dir.name}
+                  href={`/explorer/${[...slug, dir.name].join("/")}`}
+                  className="dir-card"
+                >
+                  <span className="dir-icon" aria-hidden="true">
+                    <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round">
+                      <path d="M3 7a2 2 0 0 1 2-2h4l2 2h8a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z" />
+                    </svg>
+                  </span>
+                  <span className="dir-name">{dir.name.replace(/_/g, " ")}</span>
+                </Link>
+              ))}
+            </div>
+          </section>
+        )}
+
         {files.length > 0 && (
-          <>
-            <h2 className="text-center text-xl font-semibold mt-4 mb-4 text-gray-800">
-              Files Available
-            </h2>
-            <div className="flex flex-wrap gap-4 justify-center">
-              {files.map((file) => {
-                const url = fileUrl(file.name);
+          <div className="bulk-bar">
+            <label className="bulk-select-all">
+              <input
+                type="checkbox"
+                checked={selected.size > 0 && selected.size === visibleFiles.length}
+                onChange={selectAll}
+                aria-label="Select all files"
+              />
+              <span>Select all</span>
+            </label>
+            <div className="bulk-actions">
+              <button
+                className="btn"
+                onClick={downloadSelected}
+                disabled={selected.size === 0 || zipping}
+              >
+                {zipping ? "Zipping…" : `Download selected${selected.size ? ` (${selected.size})` : ""}`}
+              </button>
+              <button className="btn btn-ghost" onClick={downloadFolder} disabled={zipping}>
+                {zipping ? "Zipping…" : "Download folder as ZIP"}
+              </button>
+            </div>
+          </div>
+        )}
+
+        {visibleFiles.length > 0 && (
+          <section className="explorer-section">
+            <h2 className="section-label">Files</h2>
+            <ul className="file-list">
+              {visibleFiles.map((file) => {
+                const url = fileUrl(slug, file.name);
                 return (
-                  <div
-                    key={file.name}
-                    className="w-60 rounded-lg border border-gray-300 bg-white px-3 py-3 text-center shadow-sm"
-                  >
-                    <div className="text-sm md:text-base font-medium text-gray-900 break-words">
-                      {file.name.replace(/_/g, "_\u200B")}
+                  <li key={file.name} className="file-row">
+                    <div className="file-info">
+                      <input
+                        type="checkbox"
+                        className="file-check"
+                        checked={selected.has(file.name)}
+                        onChange={() => toggleSelect(file.name)}
+                        aria-label={`Select ${file.name}`}
+                      />
+                      <span className="file-badge">{fileIcon(file.ext)}</span>
+                      <div className="file-meta">
+                        <span className="file-name">{file.name}</span>
+                        <span className="file-sub">
+                          {file.ext.toUpperCase() || "FILE"}
+                          {file.size ? ` · ${formatBytes(file.size)}` : ""}
+                        </span>
+                      </div>
                     </div>
-                    <div className="mt-2 flex justify-center gap-2">
-                      <a
-                        href={url}
-                        target="_blank"
-                        rel="noopener noreferrer"
-                        className="text-xs px-2 py-1 rounded bg-blue-600 text-white hover:bg-blue-700"
-                      >
-                        View
-                      </a>
-                      <a
-                        href={url}
-                        download
-                        className="text-xs px-2 py-1 rounded bg-green-600 text-white hover:bg-green-700"
-                      >
-                        Download
-                      </a>
+                    <div className="file-actions">
+                      <button className="btn btn-ghost" onClick={() => copyLink(file.name)}>
+                        {copied === file.name ? "Copied" : "Copy link"}
+                      </button>
+                      {(file.ext === "md" || file.ext === "markdown") && (
+                        <button className="btn btn-ghost" onClick={() => setPreview({ url, name: file.name })}>
+                          Preview
+                        </button>
+                      )}
+                      <a href={url} target="_blank" rel="noopener noreferrer" className="btn btn-ghost">View</a>
+                      <a href={url} download className="btn">Download</a>
                     </div>
-                  </div>
+                  </li>
                 );
               })}
-            </div>
-          </>
+            </ul>
+          </section>
         )}
 
         {directories.length === 0 && files.length === 0 && (
-          <p className={`${styles.footer} text-center text-gray-500 mt-8`}>
-            No folders or files found in this section.
-          </p>
+          <div className="empty-state">
+            <h2 className="empty-title">Nothing here yet</h2>
+            <p className="empty-text">
+              This folder has no files. Add a file under{" "}
+              <code>public/academiadrive/</code> and rebuild to see it here.
+            </p>
+            <Link href="/" className="btn btn-primary">Back to home</Link>
+          </div>
         )}
-      </div>
-    </main>
+
+        { (directories.length > 0 || files.length > 0) && visibleDirs.length === 0 && visibleFiles.length === 0 && (
+          <div className="empty-state">
+            <p className="empty-text">No items match “{filter}”.</p>
+            <button className="btn" onClick={() => setFilter("")}>Clear filter</button>
+          </div>
+        )}
+      </main>
+
+      {preview && (
+        <MarkdownModal url={preview.url} name={preview.name} onClose={() => setPreview(null)} />
+      )}
+
+      <style jsx>{`
+        .explorer-head { margin-bottom: var(--space-l); }
+        .explorer-title-row { display: flex; align-items: baseline; gap: var(--space-s); margin-top: var(--space-2xs); flex-wrap: wrap; }
+        .explorer-title { font-size: var(--step-3); margin: 0; }
+        .explorer-sub { color: var(--ink-2); font-size: var(--step--1); margin-top: var(--space-3xs); }
+        .explorer-toolbar { margin-bottom: var(--space-l); max-width: 360px; }
+        .explorer-section { margin-bottom: var(--space-xl); }
+        .section-label { font-size: var(--step--1); text-transform: uppercase; letter-spacing: 0.08em; color: var(--ink-3); font-family: var(--font-text); font-weight: 600; margin: 0 0 var(--space-s); }
+        .dir-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(200px, 1fr)); gap: var(--space-s); }
+        .dir-card {
+          display: flex; align-items: center; gap: var(--space-s);
+          padding: var(--space-s); border: var(--border); border-radius: var(--radius);
+          background: var(--surface); color: var(--ink); text-decoration: none;
+          transition: border-color var(--dur-fast) var(--ease), background var(--dur-fast) var(--ease);
+        }
+        .dir-card:hover { border-color: var(--accent); background: var(--base); text-decoration: none; }
+        .dir-icon { font-size: var(--step-1); }
+        .dir-name { font-weight: 500; font-size: var(--step--1); word-break: break-word; }
+        .bulk-bar { display: flex; align-items: center; justify-content: space-between; gap: var(--space-m); flex-wrap: wrap; padding: var(--space-s); border: var(--border); border-radius: var(--radius); background: var(--surface); margin-bottom: var(--space-l); }
+        .bulk-select-all { display: flex; align-items: center; gap: var(--space-2xs); font-size: var(--step--1); color: var(--ink-2); cursor: pointer; }
+        .bulk-actions { display: flex; gap: var(--space-2xs); flex-wrap: wrap; }
+        .file-check { width: 18px; height: 18px; flex-shrink: 0; accent-color: var(--accent); }
+        .file-list { list-style: none; padding: 0; margin: 0; display: flex; flex-direction: column; gap: var(--space-2xs); }
+        .file-row {
+          display: flex; align-items: center; justify-content: space-between; gap: var(--space-m);
+          padding: var(--space-s); border: var(--border); border-radius: var(--radius);
+          background: var(--surface); flex-wrap: wrap;
+        }
+        .file-info { display: flex; align-items: center; gap: var(--space-s); min-width: 0; }
+        .file-badge {
+          flex-shrink: 0; width: 44px; height: 44px; display: flex; align-items: center; justify-content: center;
+          border: var(--border); border-radius: var(--radius); font-size: 0.7rem; font-weight: 700;
+          color: var(--ink-2); background: var(--base);
+        }
+        .file-meta { display: flex; flex-direction: column; gap: 2px; min-width: 0; }
+        .file-name { font-weight: 500; font-size: var(--step--1); word-break: break-word; }
+        .file-sub { color: var(--ink-3); font-size: 0.75rem; }
+        .file-actions { display: flex; gap: var(--space-2xs); flex-shrink: 0; }
+        .empty-state { text-align: center; padding: var(--space-2xl) var(--space-m); }
+        .empty-title { font-size: var(--step-2); margin: 0 0 var(--space-s); }
+        .empty-text { color: var(--ink-2); max-width: 480px; margin: 0 auto var(--space-m); }
+        code { background: var(--surface); border: var(--border); border-radius: var(--radius); padding: 2px 6px; font-size: 0.85em; }
+      `}</style>
+    </>
   );
 }
