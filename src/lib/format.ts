@@ -5,6 +5,11 @@ export function formatBytes(bytes: number): string {
   return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
 }
 
+export function fileUrl(slug: string[], name: string): string {
+  const basePath = process.env.NEXT_PUBLIC_BASE_PATH || "";
+  return `${basePath}/academiadrive/${[...slug, name].map((s) => encodeURIComponent(s)).join("/")}`;
+}
+
 export function fileIcon(ext: string): string {
   const map: Record<string, string> = {
     pdf: "PDF", md: "MD", markdown: "MD", txt: "TXT",

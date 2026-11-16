@@ -6,9 +6,7 @@ import JSZip from "jszip";
 import Nav from "../../components/Nav";
 import Breadcrumbs from "../../components/Breadcrumbs";
 import MarkdownModal from "../../components/MarkdownModal";
-import { formatBytes, fileIcon } from "../../lib/format";
-
-export const metadata = { title: "AcademiaDrive Explorer" };
+import { formatBytes, fileIcon, fileUrl } from "../../lib/format";
 
 type ExplorerPageProps = {
   params: { slug: string[] };
@@ -78,11 +76,6 @@ export async function getStaticProps({ params }: { params: { slug: string[] } })
     .sort((a, b) => a.name.localeCompare(b.name));
 
   return { props: { params, directories, files } };
-}
-
-function fileUrl(slug: string[], name: string) {
-  const basePath = process.env.NEXT_PUBLIC_BASE_PATH || "";
-  return `${basePath}/academiadrive/${[...slug, name].map((s) => encodeURIComponent(s)).join("/")}`;
 }
 
 export default function ExplorerPage({ params, directories, files }: ExplorerPageProps) {
