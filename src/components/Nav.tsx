@@ -57,7 +57,7 @@ export default function Nav() {
         .nav-link { color: var(--ink-2); font-size: var(--step--1); text-decoration: none; }
         .nav-link:hover { color: var(--ink); text-decoration: none; }
         .nav-toggle { font-size: var(--step--1); }
-        @media (max-width: 640px) { .nav-title { display: none; } .nav-search { order: 3; flex-basis: 100%; max-width: none; } }
+        @media (max-width: 640px) { .nav-mark { font-size: var(--step-1); } .nav-title { display: none; } .nav-search { order: 3; flex-basis: 100%; max-width: none; } .nav-links { gap: var(--space-xs); } }
       `}</style>
     </header>
   );

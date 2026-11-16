@@ -87,7 +87,6 @@ function fileUrl(slug: string[], name: string) {
 
 export default function ExplorerPage({ params, directories, files }: ExplorerPageProps) {
   const { slug = [] } = params;
-  const [filter, setFilter] = useState("");
   const [preview, setPreview] = useState<{ url: string; name: string } | null>(null);
   const [selected, setSelected] = useState<Set<string>>(new Set());
   const [zipping, setZipping] = useState(false);
@@ -171,42 +170,22 @@ export default function ExplorerPage({ params, directories, files }: ExplorerPag
       setTimeout(() => setCopied((c) => (c === name ? null : c)), 1500);
     } catch {}
   };
-  const visibleFiles = files.filter((f) =>
-    f.name.toLowerCase().includes(filter.trim().toLowerCase())
-  );
-  const visibleDirs = directories.filter((d) =>
-    d.name.toLowerCase().includes(filter.trim().toLowerCase())
-  );
+  const visibleFiles = files;
+  const visibleDirs = directories;
 
   return (
     <>
       <Nav />
       <main className="container">
         <div className="explorer-head">
-          <Breadcrumbs slug={slug} />
-          <div className="explorer-title-row">
-            <h1 className="explorer-title">
-              {slug.length > 0 ? slug[slug.length - 1].replace(/_/g, " ") : "Resource Hub"}
-            </h1>
-            <span className="meta">{directories.length + files.length} items</span>
-          </div>
-          <p className="explorer-sub">
-            {slug.length > 0 ? slug.join(" / ") : "Syllabus, notes, question papers, lab resources and projects — all in one place."}
-          </p>
+          {slug.length > 0 && <Breadcrumbs slug={slug} />}
+          <h1 className="explorer-title">
+            {slug.length > 0 ? slug[slug.length - 1].replace(/_/g, " ") : "KTU M.Tech CSE"}
+          </h1>
+          {slug.length === 0 && (
+            <p className="explorer-sub">Syllabus, notes, question papers, and projects.</p>
+          )}
         </div>
-
-        {(directories.length > 0 || files.length > 0) && (
-          <div className="explorer-toolbar">
-            <input
-              className="input"
-              type="search"
-              placeholder="Filter this folder…"
-              value={filter}
-              onChange={(e) => setFilter(e.target.value)}
-              aria-label="Filter current folder"
-            />
-          </div>
-        )}
 
         {visibleDirs.length > 0 && (
           <section className="explorer-section">
@@ -311,12 +290,7 @@ export default function ExplorerPage({ params, directories, files }: ExplorerPag
           </div>
         )}
 
-        { (directories.length > 0 || files.length > 0) && visibleDirs.length === 0 && visibleFiles.length === 0 && (
-          <div className="empty-state">
-            <p className="empty-text">No items match “{filter}”.</p>
-            <button className="btn" onClick={() => setFilter("")}>Clear filter</button>
-          </div>
-        )}
+
       </main>
 
       {preview && (
@@ -324,10 +298,9 @@ export default function ExplorerPage({ params, directories, files }: ExplorerPag
       )}
 
       <style jsx>{`
-        .explorer-head { margin-bottom: var(--space-l); }
-        .explorer-title-row { display: flex; align-items: baseline; gap: var(--space-s); margin-top: var(--space-2xs); flex-wrap: wrap; }
-        .explorer-title { font-size: var(--step-3); margin: 0; }
-        .explorer-sub { color: var(--ink-2); font-size: var(--step--1); margin-top: var(--space-3xs); }
+        .explorer-head { margin-bottom: var(--space-xl); }
+        .explorer-title { font-size: var(--step-4); margin: 0 0 var(--space-2xs); letter-spacing: -0.02em; }
+        .explorer-sub { color: var(--ink-2); font-size: var(--step--1); margin: 0; max-width: 42ch; }
         .explorer-toolbar { margin-bottom: var(--space-l); max-width: 360px; }
         .explorer-section { margin-bottom: var(--space-xl); }
         .section-label { font-size: var(--step--1); text-transform: uppercase; letter-spacing: 0.08em; color: var(--ink-3); font-family: var(--font-text); font-weight: 600; margin: 0 0 var(--space-s); }
@@ -365,6 +338,16 @@ export default function ExplorerPage({ params, directories, files }: ExplorerPag
         .empty-title { font-size: var(--step-2); margin: 0 0 var(--space-s); }
         .empty-text { color: var(--ink-2); max-width: 480px; margin: 0 auto var(--space-m); }
         code { background: var(--surface); border: var(--border); border-radius: var(--radius); padding: 2px 6px; font-size: 0.85em; }
+        @media (max-width: 640px) {
+          .explorer-title { font-size: var(--step-3); }
+          .dir-grid { grid-template-columns: 1fr; }
+          .file-row { flex-direction: column; align-items: stretch; gap: var(--space-s); }
+          .file-info { width: 100%; }
+          .file-actions { width: 100%; justify-content: flex-start; flex-wrap: wrap; }
+          .bulk-bar { flex-direction: column; align-items: stretch; }
+          .bulk-actions { width: 100%; }
+          .bulk-actions .btn { flex: 1 1 auto; }
+        }
       `}</style>
     </>
   );
