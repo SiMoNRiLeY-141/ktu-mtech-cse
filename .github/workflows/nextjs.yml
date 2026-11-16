@@ -74,6 +74,22 @@ jobs:
             ${{ runner.os }}-nextjs-${{ hashFiles('**/package-lock.json', '**/yarn.lock') }}-
       - name: Install dependencies
         run: ${{ steps.detect-package-manager.outputs.manager }} ${{ steps.detect-package-manager.outputs.command }}
+      - name: Setup Python (for compression)
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.x"
+      - name: Install compression tools
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y ghostscript
+          python -m pip install --upgrade pip
+          python -m pip install pypdf pillow
+        continue-on-error: true
+      - name: Compress resources
+        run: npm run compress
+        continue-on-error: true
+      - name: Generate search index
+        run: node scripts/gen-search-index.js
       - name: Build with Next.js
         run: ${{ steps.detect-package-manager.outputs.runner }} next build
         env:
