@@ -15,13 +15,11 @@ type ExplorerPageProps = {
 };
 
 function hasFiles(dir: string): boolean {
-  try {
-    for (const entry of fs.readdirSync(dir, { withFileTypes: true })) {
-      const full = path.join(dir, entry.name);
-      if (entry.isFile()) return true;
-      if (entry.isDirectory() && hasFiles(full)) return true;
-    }
-  } catch {}
+  for (const entry of fs.readdirSync(dir, { withFileTypes: true })) {
+    const full = path.join(dir, entry.name);
+    if (entry.isFile()) return true;
+    if (entry.isDirectory() && hasFiles(full)) return true;
+  }
   return false;
 }
 
@@ -42,7 +40,10 @@ export async function getStaticPaths() {
     return directories;
   };
   const directories = getDirectories(basePath);
-  const paths = directories.map((dir) => ({ params: { slug: dir.split("/") } }));
+  const paths = [
+    { params: { slug: [] } },
+    ...directories.map((dir) => ({ params: { slug: dir.split("/") } })),
+  ];
   return { paths, fallback: false };
 }
 
@@ -84,6 +85,7 @@ export default function ExplorerPage({ params, directories, files }: ExplorerPag
   const [selected, setSelected] = useState<Set<string>>(new Set());
   const [zipping, setZipping] = useState(false);
   const [copied, setCopied] = useState<string | null>(null);
+  const [actionError, setActionError] = useState<string | null>(null);
 
   const toggleSelect = (name: string) => {
     setSelected((prev) => {
@@ -103,11 +105,12 @@ export default function ExplorerPage({ params, directories, files }: ExplorerPag
   const downloadZip = async (entries: { name: string; url: string; relPath: string }[], zipName: string) => {
     if (entries.length === 0) return;
     setZipping(true);
+    setActionError(null);
     try {
       const zip = new JSZip();
       for (const e of entries) {
         const res = await fetch(e.url);
-        if (!res.ok) continue;
+        if (!res.ok) throw new Error(`Failed to download ${e.name}`);
         const blob = await res.blob();
         zip.file(e.relPath, blob);
       }
@@ -119,6 +122,8 @@ export default function ExplorerPage({ params, directories, files }: ExplorerPag
       a.click();
       document.body.removeChild(a);
       URL.revokeObjectURL(a.href);
+    } catch (error) {
+      setActionError(error instanceof Error ? error.message : "The download failed.");
     } finally {
       setZipping(false);
     }
@@ -140,8 +145,10 @@ export default function ExplorerPage({ params, directories, files }: ExplorerPag
     let idx: { name: string; path: string }[] = [];
     try {
       const res = await fetch(`${basePathEnv}/search-index.json`);
+      if (!res.ok) throw new Error("Failed to load the search index");
       idx = await res.json();
-    } catch {
+    } catch (error) {
+      console.error("Unable to load the search index for folder download", error);
       idx = files.map((f) => ({ name: f.name, path: [...slug, f.name].join("/") }));
     }
     const entries = idx
@@ -161,7 +168,10 @@ export default function ExplorerPage({ params, directories, files }: ExplorerPag
       await navigator.clipboard.writeText(url);
       setCopied(name);
       setTimeout(() => setCopied((c) => (c === name ? null : c)), 1500);
-    } catch {}
+    } catch (error) {
+      console.error("Unable to copy file link", error);
+      setActionError("Unable to copy the link.");
+    }
   };
   const visibleFiles = files;
   const visibleDirs = directories;
@@ -227,6 +237,7 @@ export default function ExplorerPage({ params, directories, files }: ExplorerPag
             </div>
           </div>
         )}
+        {actionError && <p className="action-error" role="alert">{actionError}</p>}
 
         {visibleFiles.length > 0 && (
           <section className="explorer-section">
@@ -328,6 +339,7 @@ export default function ExplorerPage({ params, directories, files }: ExplorerPag
         .file-sub { color: var(--ink-3); font-size: 0.75rem; }
         .file-actions { display: flex; gap: var(--space-2xs); flex-shrink: 0; }
         .empty-state { text-align: center; padding: var(--space-2xl) var(--space-m); }
+        .action-error { color: var(--danger, #b42318); margin: 0 0 var(--space-m); }
         .empty-title { font-size: var(--step-2); margin: 0 0 var(--space-s); }
         .empty-text { color: var(--ink-2); max-width: 480px; margin: 0 auto var(--space-m); }
         code { background: var(--surface); border: var(--border); border-radius: var(--radius); padding: 2px 6px; font-size: 0.85em; }
